@@ -29,17 +29,12 @@ import streamlit as st
 import fitz  # PyMuPDF
 
 # ---------------- Gemini ----------------
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
+# ---------------- Gemini ----------------
 try:
     import google.generativeai as genai
-    if GEMINI_API_KEY:
-        genai.configure(api_key=GEMINI_API_KEY)
-        _GEMINI = True
-    else:
-        _GEMINI = False
-except Exception:
-    _GEMINI = False
+    _HAS_GENAI_LIB = True
+except ImportError:
+    _HAS_GENAI_LIB = False
 
 # ------------- Embedding Model -------------
 try:
@@ -126,10 +121,16 @@ class Retriever:
 
 # ------------- Gemini Call -------------
 def gcall(prompt: str) -> str:
-    if not _GEMINI:
-        return "(No GEMINI_API_KEY set)\n\n" + prompt[:1000]
-    model = genai.GenerativeModel("gemini-2.5-flash")
+    if not _HAS_GENAI_LIB:
+        return "(google-generativeai library not installed)"
+    
+    api_key = st.session_state.get("GEMINI_API_KEY")
+    if not api_key:
+        return "(Please enter Gemini API Key in the sidebar settings)"
+
     try:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel("gemini-2.5-flash")
         resp = model.generate_content(prompt)
         return getattr(resp, "text", "") or "(No response)"
     except Exception as e:
@@ -137,22 +138,22 @@ def gcall(prompt: str) -> str:
 
 # ------------- Prompts -------------
 def p_tldr(full: str, lang: str): 
-    return f"Create a 5-7 bullet TL;DR in {lang}. Cover problem, method, data, results, contributions.\n\n{full[:16000]}"
+    return f"Strictly based on the provided text only: Create a 5-7 bullet TL;DR in {lang}. Cover problem, method, data, results, contributions. Do not use outside knowledge.\n\n{full[:16000]}"
 def p_explain(section: str, content: str, level: str, lang: str): 
-    return f"Explain '{section}' section at {level} level in {lang}. Include summary, key points, and relevance.\n\n{content[:8000]}"
+    return f"Strictly based on the provided text only: Explain '{section}' section at {level} level in {lang}. Include summary, key points, and relevance. Do not use outside knowledge.\n\n{content[:8000]}"
 def p_gloss(full: str, lang: str) -> str:
     return (
-        f"Extract a glossary (Term | Definition) in markdown table, in {lang}. Limit to top 25 impactful terms.\n\n{full[:16000]}"
+        f"Strictly based on the provided text only: Extract a glossary (Term | Definition) in markdown table, in {lang}. Limit to top 25 impactful terms. Do not include terms not present in the text.\n\n{full[:16000]}"
     )
 def p_contrib(full: str, lang: str): 
-    return f"List main contributions of this paper as concise bullets in {lang}.\n\n{full[:16000]}"
+    return f"Strictly based on the provided text only: List main contributions of this paper as concise bullets in {lang}. Do not use outside knowledge.\n\n{full[:16000]}"
 def p_gap(full: str, lang: str): 
-    return f"Identify 5 research gaps in {lang} as JSON list of objects with fields: aspect, gap, suggestion.\n\n{full[:16000]}"
+    return f"Strictly based on the provided text only: Identify 5 research gaps in {lang} as JSON list of objects with fields: aspect, gap, suggestion. Do not hallucinate gaps not supported by the text.\n\n{full[:16000]}"
 def p_compare(a: str, b: str, lang: str):
-    return f"Compare the two research papers. Output in {lang} under headings: Similarities, Differences, and Recommendation.\n\nPaper A:\n{a[:15000]}\n\nPaper B:\n{b[:15000]}"
+    return f"Strictly based on the provided texts only: Compare the two research papers. Output in {lang} under headings: Similarities, Differences, and Recommendation. Do not use outside knowledge.\n\nPaper A:\n{a[:15000]}\n\nPaper B:\n{b[:15000]}"
 def p_qa(ctx: List[Tuple[str,str]], q: str, lang: str):
     context = "\n\n".join([f"[{s}] {t[:1000]}" for s,t in ctx])
-    return f"Answer only from the context below in {lang}.\n\n{context}\n\nQuestion: {q}"
+    return f"Answer the question strictly using ONLY the context below in {lang}. If the answer is not in the context, say 'I cannot find the answer in the paper.' Do not use outside knowledge.\n\n{context}\n\nQuestion: {q}"
 
 # ------------- Exports -------------
 def build_md(title: str, tldr: str, sections: Dict[str,str], gloss: str, contrib: str) -> str:
@@ -224,6 +225,9 @@ st.caption("💡 Tip: Use this with your literature review to automatically high
 
 with st.sidebar:
     st.header("Settings")
+    api_key_input = st.text_input("🔑 Gemini API Key", type="password", help="Get it from aistudio.google.com")
+    if api_key_input:
+        st.session_state["GEMINI_API_KEY"] = api_key_input
     lang = st.selectbox("Language", LANGS, 0)
     level = st.radio("Explanation Level", ["Basic","Intermediate","Advanced"], 1)
     file_a = st.file_uploader("📄 Paper A", type=["pdf"])
